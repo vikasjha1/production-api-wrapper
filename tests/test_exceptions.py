@@ -25,9 +25,7 @@ def test_known_error_returns_clean_json() -> None:
     response = client.get("/boom-known")
 
     assert response.status_code == 404
-    assert response.json() == {
-        "error": {"code": "not_found", "message": "thing missing"}
-    }
+    assert response.json() == {"error": {"code": "not_found", "message": "thing missing"}}
 
 
 def test_unknown_error_returns_generic_500_without_leaking_details() -> None:

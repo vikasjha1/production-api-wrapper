@@ -23,7 +23,8 @@ class BadRequestError(GatewayError):
     error_code = "bad_request"
 
 
-async def gateway_error_handler(request: Request, exc: GatewayError) -> JSONResponse:
+async def gateway_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    assert isinstance(exc, GatewayError)
     return JSONResponse(
         status_code=exc.status_code,
         content={"error": {"code": exc.error_code, "message": exc.message}},
