@@ -28,6 +28,16 @@ class UnauthorizedError(GatewayError):
     error_code = "unauthorized"
 
 
+class ProviderError(GatewayError):
+    status_code = 502
+    error_code = "provider_error"
+
+
+class ProviderTimeoutError(ProviderError):
+    status_code = 504
+    error_code = "provider_timeout"
+
+
 async def gateway_error_handler(request: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, GatewayError)
     return JSONResponse(
