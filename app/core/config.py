@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,6 +21,11 @@ class Settings(BaseSettings):
     # Server
     host: str = "0.0.0.0"
     port: int = 8000
+
+    # API keys allowed to call this gateway: raw key -> client name.
+    # Temporary home until a real database exists (see api_keys usage
+    # in app/api/deps.py). Set via API_KEYS as a JSON object in .env.
+    api_keys: dict[str, str] = Field(default_factory=dict)
 
     # Provider credentials — left optional for now (Phase 1 doesn't call
     # any provider). We revisit this in Phase 2 and make them required,

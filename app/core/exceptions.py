@@ -23,6 +23,11 @@ class BadRequestError(GatewayError):
     error_code = "bad_request"
 
 
+class UnauthorizedError(GatewayError):
+    status_code = 401
+    error_code = "unauthorized"
+
+
 async def gateway_error_handler(request: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, GatewayError)
     return JSONResponse(
