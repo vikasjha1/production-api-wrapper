@@ -1,10 +1,15 @@
-from fastapi import Depends, Security
+import httpx
+from fastapi import Depends, Request, Security
 from fastapi.security import APIKeyHeader
 
 from app.core.config import Settings, get_settings
 from app.core.exceptions import UnauthorizedError
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+def get_http_client(request: Request) -> httpx.AsyncClient:
+    return request.app.state.http_client  # type: ignore[no-any-return]
 
 
 class AuthenticatedClient:

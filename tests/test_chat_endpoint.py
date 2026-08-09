@@ -1,0 +1,85 @@
+from collections.abc import Generator
+
+import httpx
+import pytest
+import respx
+from fastapi.testclient import TestClient
+
+from app.core.config import Settings, get_settings
+from app.main import app
+from app.services.providers.anthropic import ANTHROPIC_API_URL
+
+
+@pytest.fixture
+def configured_client() -> Generator[TestClient, None, None]:
+    def override_settings() -> Settings:
+        return Settings(
+            api_keys={"test-key-abc": "test-client"},
+            anthropic_api_key="fake-anthropic-key",
+            openai_api_key=None,
+        )
+
+    app.dependency_overrides[get_settings] = override_settings
+    with TestClient(app) as client:
+        yield client
+    app.dependency_overrides.pop(get_settings, None)
+
+
+@respx.mock
+def test_chat_with_anthropic_returns_response(configured_client: TestClient) -> None:
+    respx.post(ANTHROPIC_API_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "content": [{"type": "text", "text": "Hello there"}],
+                "model": "claude-haiku-4-5-20251001",
+                "usage": {"input_tokens": 10, "output_tokens": 3},
+            },
+        )
+    )
+
+    response = configured_client.post(
+        "/v1/chat/anthropic",
+        headers={"X-API-Key": "test-key-abc"},
+        json={
+            "model": "claude-haiku-4-5-20251001",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["content"] == "Hello there"
+    assert body["provider"] == "anthropic"
+
+
+def test_chat_requires_auth(configured_client: TestClient) -> None:
+    response = configured_client.post(
+        "/v1/chat/anthropic",
+        json={
+            "model": "claude-haiku-4-5-20251001",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+
+    assert response.status_code == 401
+
+
+def test_chat_rejects_unknown_provider(configured_client: TestClient) -> None:
+    response = configured_client.post(
+        "/v1/chat/not-a-real-provider",
+        headers={"X-API-Key": "test-key-abc"},
+        json={"model": "x", "messages": [{"role": "user", "content": "hi"}]},
+    )
+
+    assert response.status_code == 400
+
+
+def test_chat_rejects_unconfigured_provider(configured_client: TestClient) -> None:
+    response = configured_client.post(
+        "/v1/chat/openai",
+        headers={"X-API-Key": "test-key-abc"},
+        json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}]},
+    )
+
+    assert response.status_code == 400
