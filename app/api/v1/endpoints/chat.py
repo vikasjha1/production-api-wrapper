@@ -6,6 +6,7 @@ from app.api.deps import AuthenticatedClient, get_http_client, get_rate_limited_
 from app.core.config import Settings, get_settings
 from app.models.chat import ChatRequest, ChatResponse
 from app.services.cache import get_cached_response, set_cached_response
+from app.services.cost_tracker import record_usage
 from app.services.providers.registry import get_provider
 
 router = APIRouter()
@@ -30,6 +31,7 @@ async def chat(
     chat_response = await provider_instance.send_message(request)
 
     await set_cached_response(redis, provider, request, chat_response, settings.cache_ttl_seconds)
+    await record_usage(redis, client.client_id, provider, chat_response)
     response.headers["X-Cache"] = "MISS"
 
     return chat_response

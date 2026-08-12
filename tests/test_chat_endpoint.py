@@ -154,3 +154,36 @@ def test_identical_chat_request_is_served_from_cache(configured_client: TestClie
     # The real proof: Anthropic was only actually called once, even though
     # we made two identical requests through the route.
     assert route.call_count == 1
+
+
+@respx.mock
+def test_chat_records_cost_and_cache_hits_dont_double_count(configured_client: TestClient) -> None:
+    respx.post(ANTHROPIC_API_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "content": [{"type": "text", "text": "Hello there"}],
+                "model": "claude-haiku-4-5-20251001",
+                "usage": {"input_tokens": 1_000_000, "output_tokens": 0},
+            },
+        )
+    )
+
+    headers = {"X-API-Key": "test-key-abc"}
+    payload = {
+        "model": "claude-haiku-4-5-20251001",
+        "messages": [{"role": "user", "content": "cost check"}],
+    }
+
+    first = configured_client.post("/v1/chat/anthropic", headers=headers, json=payload)
+    second = configured_client.post("/v1/chat/anthropic", headers=headers, json=payload)
+
+    assert first.headers["X-Cache"] == "MISS"
+    assert second.headers["X-Cache"] == "HIT"
+
+    usage_response = configured_client.get("/v1/usage", headers=headers)
+
+    assert usage_response.status_code == 200
+    # 1,000,000 input tokens at $1.00/1M = $1.00 — counted once, not twice,
+    # since the second call was served from cache.
+    assert usage_response.json()["total_cost_usd"] == pytest.approx(1.00)
