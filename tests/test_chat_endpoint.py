@@ -121,3 +121,36 @@ def test_chat_returns_429_after_rate_limit_exceeded(configured_client: TestClien
     assert second.status_code == 200
     assert third.status_code == 429
     assert third.json()["error"]["code"] == "rate_limit_exceeded"
+
+
+@respx.mock
+def test_identical_chat_request_is_served_from_cache(configured_client: TestClient) -> None:
+    route = respx.post(ANTHROPIC_API_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "content": [{"type": "text", "text": "Hello there"}],
+                "model": "claude-haiku-4-5-20251001",
+                "usage": {"input_tokens": 10, "output_tokens": 3},
+            },
+        )
+    )
+
+    headers = {"X-API-Key": "test-key-abc"}
+    payload = {
+        "model": "claude-haiku-4-5-20251001",
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+
+    first = configured_client.post("/v1/chat/anthropic", headers=headers, json=payload)
+    second = configured_client.post("/v1/chat/anthropic", headers=headers, json=payload)
+
+    assert first.status_code == 200
+    assert first.headers["X-Cache"] == "MISS"
+    assert second.status_code == 200
+    assert second.headers["X-Cache"] == "HIT"
+    assert second.json() == first.json()
+
+    # The real proof: Anthropic was only actually called once, even though
+    # we made two identical requests through the route.
+    assert route.call_count == 1

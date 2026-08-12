@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     rate_limit_requests: int = 60
     rate_limit_window_seconds: int = 60
 
+    # How long an identical chat request's response stays cached.
+    cache_ttl_seconds: int = 300
+
 
 @lru_cache
 def get_settings() -> Settings:
