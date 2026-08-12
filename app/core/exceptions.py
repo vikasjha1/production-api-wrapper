@@ -38,6 +38,11 @@ class ProviderTimeoutError(ProviderError):
     error_code = "provider_timeout"
 
 
+class RateLimitExceededError(GatewayError):
+    status_code = 429
+    error_code = "rate_limit_exceeded"
+
+
 async def gateway_error_handler(request: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, GatewayError)
     return JSONResponse(

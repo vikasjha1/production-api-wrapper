@@ -3,8 +3,10 @@ from collections.abc import Generator
 import httpx
 import pytest
 import respx
+from fakeredis.aioredis import FakeRedis
 from fastapi.testclient import TestClient
 
+from app.api.deps import get_redis
 from app.core.config import Settings, get_settings
 from app.main import app
 from app.services.providers.anthropic import ANTHROPIC_API_URL
@@ -17,12 +19,18 @@ def configured_client() -> Generator[TestClient, None, None]:
             api_keys={"test-key-abc": "test-client"},
             anthropic_api_key="fake-anthropic-key",
             openai_api_key=None,
+            rate_limit_requests=2,
+            rate_limit_window_seconds=60,
         )
 
+    fake_redis = FakeRedis()
+
     app.dependency_overrides[get_settings] = override_settings
+    app.dependency_overrides[get_redis] = lambda: fake_redis
     with TestClient(app) as client:
         yield client
     app.dependency_overrides.pop(get_settings, None)
+    app.dependency_overrides.pop(get_redis, None)
 
 
 @respx.mock
@@ -83,3 +91,33 @@ def test_chat_rejects_unconfigured_provider(configured_client: TestClient) -> No
     )
 
     assert response.status_code == 400
+
+
+@respx.mock
+def test_chat_returns_429_after_rate_limit_exceeded(configured_client: TestClient) -> None:
+    respx.post(ANTHROPIC_API_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "content": [{"type": "text", "text": "Hello there"}],
+                "model": "claude-haiku-4-5-20251001",
+                "usage": {"input_tokens": 10, "output_tokens": 3},
+            },
+        )
+    )
+
+    headers = {"X-API-Key": "test-key-abc"}
+    payload = {
+        "model": "claude-haiku-4-5-20251001",
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+
+    # fixture sets rate_limit_requests=2, so the first two should succeed
+    first = configured_client.post("/v1/chat/anthropic", headers=headers, json=payload)
+    second = configured_client.post("/v1/chat/anthropic", headers=headers, json=payload)
+    third = configured_client.post("/v1/chat/anthropic", headers=headers, json=payload)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert third.status_code == 429
+    assert third.json()["error"]["code"] == "rate_limit_exceeded"

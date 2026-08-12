@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI
+from redis.asyncio import Redis
 
 from app.api.v1.router import api_router
 from app.core.config import get_settings
@@ -13,9 +14,12 @@ from app.middleware.request_logging import RequestLoggingMiddleware
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+    settings = get_settings()
     app.state.http_client = httpx.AsyncClient()
+    app.state.redis = Redis.from_url(settings.redis_url)
     yield
     await app.state.http_client.aclose()
+    await app.state.redis.aclose()
 
 
 def create_app() -> FastAPI:

@@ -1,7 +1,7 @@
 import httpx
 from fastapi import APIRouter, Depends
 
-from app.api.deps import AuthenticatedClient, get_current_client, get_http_client
+from app.api.deps import AuthenticatedClient, get_http_client, get_rate_limited_client
 from app.core.config import Settings, get_settings
 from app.models.chat import ChatRequest, ChatResponse
 from app.services.providers.registry import get_provider
@@ -13,7 +13,7 @@ router = APIRouter()
 async def chat(
     provider: str,
     request: ChatRequest,
-    client: AuthenticatedClient = Depends(get_current_client),
+    client: AuthenticatedClient = Depends(get_rate_limited_client),
     settings: Settings = Depends(get_settings),
     http_client: httpx.AsyncClient = Depends(get_http_client),
 ) -> ChatResponse:
