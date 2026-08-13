@@ -2,7 +2,7 @@ import httpx
 import pytest
 import respx
 
-from app.core.exceptions import ProviderError, ProviderTimeoutError
+from app.core.exceptions import BadRequestError, ProviderError, ProviderTimeoutError
 from app.models.chat import ChatMessage, ChatRequest
 from app.services.providers.openai import OPENAI_API_URL, OpenAIProvider
 
@@ -35,8 +35,21 @@ async def test_send_message_parses_successful_response() -> None:
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_send_message_raises_provider_error_on_http_error() -> None:
+async def test_send_message_raises_bad_request_error_on_4xx() -> None:
     respx.post(OPENAI_API_URL).mock(return_value=httpx.Response(400, json={"error": "bad request"}))
+
+    async with httpx.AsyncClient() as client:
+        provider = OpenAIProvider(api_key="fake-key", client=client)
+        with pytest.raises(BadRequestError):
+            await provider.send_message(
+                ChatRequest(model="gpt-4o-mini", messages=[ChatMessage(role="user", content="hi")])
+            )
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_send_message_raises_provider_error_on_5xx() -> None:
+    respx.post(OPENAI_API_URL).mock(return_value=httpx.Response(503, json={"error": "overloaded"}))
 
     async with httpx.AsyncClient() as client:
         provider = OpenAIProvider(api_key="fake-key", client=client)

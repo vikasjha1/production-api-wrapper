@@ -1,6 +1,6 @@
 import httpx
 
-from app.core.exceptions import ProviderError, ProviderTimeoutError
+from app.core.exceptions import BadRequestError, ProviderError, ProviderTimeoutError
 from app.models.chat import ChatRequest, ChatResponse, ChatUsage
 
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
@@ -46,8 +46,12 @@ class AnthropicProvider:
         except httpx.TimeoutException as exc:
             raise ProviderTimeoutError("Anthropic request timed out") from exc
 
-        if response.status_code >= 400:
+        if response.status_code >= 500:
             raise ProviderError(f"Anthropic returned {response.status_code}: {response.text}")
+        if response.status_code >= 400:
+            raise BadRequestError(
+                f"Anthropic rejected the request ({response.status_code}): {response.text}"
+            )
 
         data = response.json()
         text = "".join(block["text"] for block in data["content"] if block["type"] == "text")

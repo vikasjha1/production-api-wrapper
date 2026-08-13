@@ -1,6 +1,6 @@
 import httpx
 
-from app.core.exceptions import ProviderError, ProviderTimeoutError
+from app.core.exceptions import BadRequestError, ProviderError, ProviderTimeoutError
 from app.models.chat import ChatRequest, ChatResponse, ChatUsage
 
 OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
@@ -35,8 +35,12 @@ class OpenAIProvider:
         except httpx.TimeoutException as exc:
             raise ProviderTimeoutError("OpenAI request timed out") from exc
 
-        if response.status_code >= 400:
+        if response.status_code >= 500:
             raise ProviderError(f"OpenAI returned {response.status_code}: {response.text}")
+        if response.status_code >= 400:
+            raise BadRequestError(
+                f"OpenAI rejected the request ({response.status_code}): {response.text}"
+            )
 
         data = response.json()
         choice = data["choices"][0]
