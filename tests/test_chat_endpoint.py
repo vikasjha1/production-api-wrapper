@@ -21,6 +21,8 @@ def configured_client() -> Generator[TestClient, None, None]:
             openai_api_key=None,
             rate_limit_requests=2,
             rate_limit_window_seconds=60,
+            retry_max_attempts=3,
+            retry_base_delay_seconds=0.01,
         )
 
     fake_redis = FakeRedis()
@@ -187,3 +189,37 @@ def test_chat_records_cost_and_cache_hits_dont_double_count(configured_client: T
     # 1,000,000 input tokens at $1.00/1M = $1.00 — counted once, not twice,
     # since the second call was served from cache.
     assert usage_response.json()["total_cost_usd"] == pytest.approx(1.00)
+
+
+@respx.mock
+def test_chat_retries_on_transient_provider_error_and_succeeds(
+    configured_client: TestClient,
+) -> None:
+    route = respx.post(ANTHROPIC_API_URL).mock(
+        side_effect=[
+            httpx.Response(503, json={"error": "overloaded"}),
+            httpx.Response(
+                200,
+                json={
+                    "content": [{"type": "text", "text": "Hello there"}],
+                    "model": "claude-haiku-4-5-20251001",
+                    "usage": {"input_tokens": 10, "output_tokens": 3},
+                },
+            ),
+        ]
+    )
+
+    response = configured_client.post(
+        "/v1/chat/anthropic",
+        headers={"X-API-Key": "test-key-abc"},
+        json={
+            "model": "claude-haiku-4-5-20251001",
+            "messages": [{"role": "user", "content": "retry check"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["content"] == "Hello there"
+    # Proves the client only saw one final answer, even though the first
+    # attempt against Anthropic actually failed with a 503 underneath.
+    assert route.call_count == 2

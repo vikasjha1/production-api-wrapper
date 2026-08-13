@@ -8,6 +8,7 @@ from app.models.chat import ChatRequest, ChatResponse
 from app.services.cache import get_cached_response, set_cached_response
 from app.services.cost_tracker import record_usage
 from app.services.providers.registry import get_provider
+from app.services.retry import with_retry
 
 router = APIRouter()
 
@@ -28,7 +29,11 @@ async def chat(
         return cached_response
 
     provider_instance = get_provider(provider, settings, http_client)
-    chat_response = await provider_instance.send_message(request)
+    chat_response = await with_retry(
+        lambda: provider_instance.send_message(request),
+        max_attempts=settings.retry_max_attempts,
+        base_delay=settings.retry_base_delay_seconds,
+    )
 
     await set_cached_response(redis, provider, request, chat_response, settings.cache_ttl_seconds)
     await record_usage(redis, client.client_id, provider, chat_response)

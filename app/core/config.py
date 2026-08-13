@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     # How long an identical chat request's response stays cached.
     cache_ttl_seconds: int = 300
 
+    # Retry policy for transient provider failures.
+    retry_max_attempts: int = 3
+    retry_base_delay_seconds: float = 0.5
+
 
 @lru_cache
 def get_settings() -> Settings:
