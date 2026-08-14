@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     retry_max_attempts: int = 3
     retry_base_delay_seconds: float = 0.5
 
+    # Circuit breaker: consecutive failures before a provider is considered
+    # down, and how long to wait before cautiously testing recovery.
+    circuit_breaker_failure_threshold: int = 5
+    circuit_breaker_recovery_timeout_seconds: float = 30.0
+
 
 @lru_cache
 def get_settings() -> Settings:

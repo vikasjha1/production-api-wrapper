@@ -43,6 +43,11 @@ class RateLimitExceededError(GatewayError):
     error_code = "rate_limit_exceeded"
 
 
+class CircuitOpenError(GatewayError):
+    status_code = 503
+    error_code = "circuit_open"
+
+
 async def gateway_error_handler(request: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, GatewayError)
     return JSONResponse(

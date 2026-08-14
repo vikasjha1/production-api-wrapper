@@ -19,10 +19,16 @@ def configured_client() -> Generator[TestClient, None, None]:
             api_keys={"test-key-abc": "test-client"},
             anthropic_api_key="fake-anthropic-key",
             openai_api_key=None,
-            rate_limit_requests=2,
+            # Generous defaults so most tests never brush up against these
+            # limits by accident. Tests that specifically exercise rate
+            # limiting or the circuit breaker override get_settings locally
+            # with tighter values instead of changing this shared default.
+            rate_limit_requests=100,
             rate_limit_window_seconds=60,
             retry_max_attempts=3,
             retry_base_delay_seconds=0.01,
+            circuit_breaker_failure_threshold=100,
+            circuit_breaker_recovery_timeout_seconds=30.0,
         )
 
     fake_redis = FakeRedis()
@@ -97,6 +103,21 @@ def test_chat_rejects_unconfigured_provider(configured_client: TestClient) -> No
 
 @respx.mock
 def test_chat_returns_429_after_rate_limit_exceeded(configured_client: TestClient) -> None:
+    def restrictive_rate_limit_settings() -> Settings:
+        return Settings(
+            api_keys={"test-key-abc": "test-client"},
+            anthropic_api_key="fake-anthropic-key",
+            openai_api_key=None,
+            rate_limit_requests=2,
+            rate_limit_window_seconds=60,
+            retry_max_attempts=3,
+            retry_base_delay_seconds=0.01,
+            circuit_breaker_failure_threshold=100,
+            circuit_breaker_recovery_timeout_seconds=30.0,
+        )
+
+    app.dependency_overrides[get_settings] = restrictive_rate_limit_settings
+
     respx.post(ANTHROPIC_API_URL).mock(
         return_value=httpx.Response(
             200,
@@ -114,7 +135,7 @@ def test_chat_returns_429_after_rate_limit_exceeded(configured_client: TestClien
         "messages": [{"role": "user", "content": "hi"}],
     }
 
-    # fixture sets rate_limit_requests=2, so the first two should succeed
+    # overridden settings set rate_limit_requests=2, so the first two succeed
     first = configured_client.post("/v1/chat/anthropic", headers=headers, json=payload)
     second = configured_client.post("/v1/chat/anthropic", headers=headers, json=payload)
     third = configured_client.post("/v1/chat/anthropic", headers=headers, json=payload)
@@ -223,3 +244,89 @@ def test_chat_retries_on_transient_provider_error_and_succeeds(
     # Proves the client only saw one final answer, even though the first
     # attempt against Anthropic actually failed with a 503 underneath.
     assert route.call_count == 2
+
+
+@respx.mock
+def test_chat_circuit_opens_after_repeated_failures(configured_client: TestClient) -> None:
+    def strict_breaker_settings() -> Settings:
+        return Settings(
+            api_keys={"test-key-abc": "test-client"},
+            anthropic_api_key="fake-anthropic-key",
+            openai_api_key=None,
+            rate_limit_requests=100,
+            rate_limit_window_seconds=60,
+            retry_max_attempts=1,
+            retry_base_delay_seconds=0.01,
+            circuit_breaker_failure_threshold=2,
+            circuit_breaker_recovery_timeout_seconds=30.0,
+        )
+
+    app.dependency_overrides[get_settings] = strict_breaker_settings
+
+    route = respx.post(ANTHROPIC_API_URL).mock(
+        return_value=httpx.Response(503, json={"error": "overloaded"})
+    )
+
+    headers = {"X-API-Key": "test-key-abc"}
+    payload = {
+        "model": "claude-haiku-4-5-20251001",
+        "messages": [{"role": "user", "content": "circuit check"}],
+    }
+
+    # Two failures in a row should trip the breaker (threshold=2).
+    first = configured_client.post("/v1/chat/anthropic", headers=headers, json=payload)
+    second = configured_client.post("/v1/chat/anthropic", headers=headers, json=payload)
+
+    assert first.status_code == 502
+    assert second.status_code == 502
+    calls_before_open = route.call_count
+
+    third = configured_client.post("/v1/chat/anthropic", headers=headers, json=payload)
+
+    assert third.status_code == 503
+    assert third.json()["error"]["code"] == "circuit_open"
+    # The real proof: the third request never even reached Anthropic —
+    # the breaker rejected it before any network call was attempted.
+    assert route.call_count == calls_before_open
+
+
+@respx.mock
+def test_chat_client_errors_do_not_trip_the_circuit_breaker(configured_client: TestClient) -> None:
+    def strict_breaker_settings() -> Settings:
+        return Settings(
+            api_keys={"test-key-abc": "test-client"},
+            anthropic_api_key="fake-anthropic-key",
+            openai_api_key=None,
+            rate_limit_requests=100,
+            rate_limit_window_seconds=60,
+            retry_max_attempts=1,
+            retry_base_delay_seconds=0.01,
+            circuit_breaker_failure_threshold=2,
+            circuit_breaker_recovery_timeout_seconds=30.0,
+        )
+
+    app.dependency_overrides[get_settings] = strict_breaker_settings
+
+    respx.post(ANTHROPIC_API_URL).mock(
+        return_value=httpx.Response(400, json={"error": "invalid request"})
+    )
+
+    headers = {"X-API-Key": "test-key-abc"}
+    payload = {
+        "model": "claude-haiku-4-5-20251001",
+        "messages": [{"role": "user", "content": "malformed on purpose"}],
+    }
+
+    # Same failure threshold (2) as the circuit-breaker test above, but these
+    # are client mistakes (4xx), not provider health problems — three of
+    # them in a row should NOT trip the breaker.
+    first = configured_client.post("/v1/chat/anthropic", headers=headers, json=payload)
+    second = configured_client.post("/v1/chat/anthropic", headers=headers, json=payload)
+    third = configured_client.post("/v1/chat/anthropic", headers=headers, json=payload)
+
+    assert first.status_code == 400
+    assert second.status_code == 400
+    # If the breaker had incorrectly tripped, this would be 503/circuit_open
+    # instead of another honest 400.
+    assert third.status_code == 400
+    assert third.json()["error"]["code"] == "bad_request"

@@ -5,6 +5,7 @@ from redis.asyncio import Redis
 
 from app.core.config import Settings, get_settings
 from app.core.exceptions import UnauthorizedError
+from app.services.circuit_breaker import CircuitBreaker
 from app.services.rate_limiter import check_rate_limit
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
@@ -16,6 +17,10 @@ def get_http_client(request: Request) -> httpx.AsyncClient:
 
 def get_redis(request: Request) -> Redis:
     return request.app.state.redis  # type: ignore[no-any-return]
+
+
+def get_circuit_breakers(request: Request) -> dict[str, CircuitBreaker]:
+    return request.app.state.circuit_breakers  # type: ignore[no-any-return]
 
 
 class AuthenticatedClient:

@@ -17,6 +17,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     settings = get_settings()
     app.state.http_client = httpx.AsyncClient()
     app.state.redis = Redis.from_url(settings.redis_url)
+    app.state.circuit_breakers = {}
     yield
     await app.state.http_client.aclose()
     await app.state.redis.aclose()
