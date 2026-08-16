@@ -10,6 +10,7 @@ from app.api.deps import get_redis
 from app.core.config import Settings, get_settings
 from app.main import app
 from app.services.providers.anthropic import ANTHROPIC_API_URL
+from app.services.providers.openai import OPENAI_API_URL
 
 
 @pytest.fixture
@@ -330,3 +331,102 @@ def test_chat_client_errors_do_not_trip_the_circuit_breaker(configured_client: T
     # instead of another honest 400.
     assert third.status_code == 400
     assert third.json()["error"]["code"] == "bad_request"
+
+
+def _fallback_settings() -> Settings:
+    return Settings(
+        api_keys={"test-key-abc": "test-client"},
+        anthropic_api_key="fake-anthropic-key",
+        openai_api_key="fake-openai-key",
+        rate_limit_requests=100,
+        rate_limit_window_seconds=60,
+        retry_max_attempts=1,
+        retry_base_delay_seconds=0.01,
+        circuit_breaker_failure_threshold=100,
+        circuit_breaker_recovery_timeout_seconds=30.0,
+    )
+
+
+@respx.mock
+def test_chat_falls_back_to_secondary_provider_when_primary_fails(
+    configured_client: TestClient,
+) -> None:
+    app.dependency_overrides[get_settings] = _fallback_settings
+
+    respx.post(ANTHROPIC_API_URL).mock(
+        return_value=httpx.Response(503, json={"error": "overloaded"})
+    )
+    openai_route = respx.post(OPENAI_API_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "model": "gpt-4o-mini-2026-01-01",
+                "choices": [{"message": {"role": "assistant", "content": "Hi from OpenAI"}}],
+                "usage": {"prompt_tokens": 8, "completion_tokens": 4},
+            },
+        )
+    )
+
+    response = configured_client.post(
+        "/v1/chat/anthropic",
+        headers={"X-API-Key": "test-key-abc"},
+        json={
+            "model": "claude-haiku-4-5-20251001",
+            "messages": [{"role": "user", "content": "fallback check"}],
+            "fallback": {"provider": "openai", "model": "gpt-4o-mini"},
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["provider"] == "openai"
+    assert body["content"] == "Hi from OpenAI"
+    assert response.headers["X-Fallback"] == "true"
+    assert openai_route.call_count == 1
+
+
+@respx.mock
+def test_chat_without_fallback_field_fails_normally(configured_client: TestClient) -> None:
+    app.dependency_overrides[get_settings] = _fallback_settings
+
+    respx.post(ANTHROPIC_API_URL).mock(
+        return_value=httpx.Response(503, json={"error": "overloaded"})
+    )
+    openai_route = respx.post(OPENAI_API_URL).mock(return_value=httpx.Response(200, json={}))
+
+    response = configured_client.post(
+        "/v1/chat/anthropic",
+        headers={"X-API-Key": "test-key-abc"},
+        json={
+            "model": "claude-haiku-4-5-20251001",
+            "messages": [{"role": "user", "content": "no fallback configured"}],
+        },
+    )
+
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "provider_error"
+    # OpenAI should never have been contacted at all — no fallback was requested.
+    assert openai_route.call_count == 0
+
+
+@respx.mock
+def test_chat_fallback_also_failing_returns_its_own_error(configured_client: TestClient) -> None:
+    app.dependency_overrides[get_settings] = _fallback_settings
+
+    respx.post(ANTHROPIC_API_URL).mock(
+        return_value=httpx.Response(503, json={"error": "overloaded"})
+    )
+    respx.post(OPENAI_API_URL).mock(return_value=httpx.Response(503, json={"error": "also down"}))
+
+    response = configured_client.post(
+        "/v1/chat/anthropic",
+        headers={"X-API-Key": "test-key-abc"},
+        json={
+            "model": "claude-haiku-4-5-20251001",
+            "messages": [{"role": "user", "content": "both down"}],
+            "fallback": {"provider": "openai", "model": "gpt-4o-mini"},
+        },
+    )
+
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "provider_error"

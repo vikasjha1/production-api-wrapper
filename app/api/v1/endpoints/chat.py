@@ -10,13 +10,12 @@ from app.api.deps import (
     get_redis,
 )
 from app.core.config import Settings, get_settings
-from app.core.exceptions import ProviderError
+from app.core.exceptions import CircuitOpenError, ProviderError
 from app.models.chat import ChatRequest, ChatResponse
 from app.services.cache import get_cached_response, set_cached_response
-from app.services.circuit_breaker import CircuitBreaker, get_circuit_breaker
+from app.services.circuit_breaker import CircuitBreaker
 from app.services.cost_tracker import record_usage
-from app.services.providers.registry import get_provider
-from app.services.retry import with_retry
+from app.services.resilient_call import call_provider_with_resilience
 
 router = APIRouter()
 
@@ -37,30 +36,31 @@ async def chat(
         response.headers["X-Cache"] = "HIT"
         return cached_response
 
-    provider_instance = get_provider(provider, settings, http_client)
-
-    breaker = get_circuit_breaker(
-        circuit_breakers,
-        provider,
-        settings.circuit_breaker_failure_threshold,
-        settings.circuit_breaker_recovery_timeout_seconds,
-    )
-    breaker.before_call()
+    used_provider = provider
+    effective_request = request
+    fallback_used = False
 
     try:
-        chat_response = await with_retry(
-            lambda: provider_instance.send_message(request),
-            max_attempts=settings.retry_max_attempts,
-            base_delay=settings.retry_base_delay_seconds,
+        chat_response = await call_provider_with_resilience(
+            provider, request, settings, http_client, circuit_breakers
         )
-    except ProviderError:
-        breaker.record_failure()
-        raise
-    else:
-        breaker.record_success()
+    except (ProviderError, CircuitOpenError):
+        if request.fallback is None:
+            raise
+        effective_request = request.model_copy(
+            update={"model": request.fallback.model, "fallback": None}
+        )
+        used_provider = request.fallback.provider
+        chat_response = await call_provider_with_resilience(
+            used_provider, effective_request, settings, http_client, circuit_breakers
+        )
+        fallback_used = True
 
-    await set_cached_response(redis, provider, request, chat_response, settings.cache_ttl_seconds)
-    await record_usage(redis, client.client_id, provider, chat_response)
+    await set_cached_response(
+        redis, used_provider, effective_request, chat_response, settings.cache_ttl_seconds
+    )
+    await record_usage(redis, client.client_id, used_provider, chat_response)
     response.headers["X-Cache"] = "MISS"
+    response.headers["X-Fallback"] = "true" if fallback_used else "false"
 
     return chat_response
