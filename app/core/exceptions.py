@@ -48,6 +48,11 @@ class CircuitOpenError(GatewayError):
     error_code = "circuit_open"
 
 
+class ConflictError(GatewayError):
+    status_code = 409
+    error_code = "conflict"
+
+
 async def gateway_error_handler(request: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, GatewayError)
     return JSONResponse(

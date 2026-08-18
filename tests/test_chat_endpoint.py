@@ -30,6 +30,8 @@ def configured_client() -> Generator[TestClient, None, None]:
             retry_base_delay_seconds=0.01,
             circuit_breaker_failure_threshold=100,
             circuit_breaker_recovery_timeout_seconds=30.0,
+            idempotency_lock_ttl_seconds=60,
+            idempotency_result_ttl_seconds=86400,
         )
 
     fake_redis = FakeRedis()
@@ -430,3 +432,87 @@ def test_chat_fallback_also_failing_returns_its_own_error(configured_client: Tes
 
     assert response.status_code == 502
     assert response.json()["error"]["code"] == "provider_error"
+
+
+@respx.mock
+def test_chat_idempotent_replay_skips_second_provider_call(configured_client: TestClient) -> None:
+    route = respx.post(ANTHROPIC_API_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "content": [{"type": "text", "text": "Hello there"}],
+                "model": "claude-haiku-4-5-20251001",
+                "usage": {"input_tokens": 10, "output_tokens": 3},
+            },
+        )
+    )
+
+    headers = {"X-API-Key": "test-key-abc", "Idempotency-Key": "retry-key-123"}
+    payload = {
+        "model": "claude-haiku-4-5-20251001",
+        "messages": [{"role": "user", "content": "idempotency check"}],
+    }
+
+    first = configured_client.post("/v1/chat/anthropic", headers=headers, json=payload)
+    second = configured_client.post("/v1/chat/anthropic", headers=headers, json=payload)
+
+    assert first.status_code == 200
+    assert "X-Idempotent-Replay" not in first.headers
+    assert second.status_code == 200
+    assert second.headers["X-Idempotent-Replay"] == "true"
+    assert second.json() == first.json()
+
+    # The real proof: Anthropic was only actually contacted once.
+    assert route.call_count == 1
+
+
+@respx.mock
+def test_chat_failed_attempt_releases_idempotency_key_for_retry(
+    configured_client: TestClient,
+) -> None:
+    def single_attempt_settings() -> Settings:
+        return Settings(
+            api_keys={"test-key-abc": "test-client"},
+            anthropic_api_key="fake-anthropic-key",
+            openai_api_key=None,
+            rate_limit_requests=100,
+            rate_limit_window_seconds=60,
+            retry_max_attempts=1,
+            retry_base_delay_seconds=0.01,
+            circuit_breaker_failure_threshold=100,
+            circuit_breaker_recovery_timeout_seconds=30.0,
+            idempotency_lock_ttl_seconds=60,
+            idempotency_result_ttl_seconds=86400,
+        )
+
+    app.dependency_overrides[get_settings] = single_attempt_settings
+
+    route = respx.post(ANTHROPIC_API_URL).mock(
+        side_effect=[
+            httpx.Response(503, json={"error": "overloaded"}),
+            httpx.Response(
+                200,
+                json={
+                    "content": [{"type": "text", "text": "Recovered"}],
+                    "model": "claude-haiku-4-5-20251001",
+                    "usage": {"input_tokens": 10, "output_tokens": 3},
+                },
+            ),
+        ]
+    )
+
+    headers = {"X-API-Key": "test-key-abc", "Idempotency-Key": "retry-after-failure"}
+    payload = {
+        "model": "claude-haiku-4-5-20251001",
+        "messages": [{"role": "user", "content": "will fail then succeed"}],
+    }
+
+    first = configured_client.post("/v1/chat/anthropic", headers=headers, json=payload)
+    second = configured_client.post("/v1/chat/anthropic", headers=headers, json=payload)
+
+    assert first.status_code == 502
+    # If the lock hadn't been released after the failure, this would come
+    # back 409 (conflict) instead of a genuine fresh 200.
+    assert second.status_code == 200
+    assert second.json()["content"] == "Recovered"
+    assert route.call_count == 2

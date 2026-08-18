@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     circuit_breaker_failure_threshold: int = 5
     circuit_breaker_recovery_timeout_seconds: float = 30.0
 
+    # Idempotency keys: how long an in-flight request holds its lock before
+    # being considered abandoned, and how long a completed result stays
+    # available for replay.
+    idempotency_lock_ttl_seconds: int = 60
+    idempotency_result_ttl_seconds: int = 86400
+
 
 @lru_cache
 def get_settings() -> Settings:
