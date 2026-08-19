@@ -29,9 +29,7 @@ class OpenAIProvider:
         }
 
         try:
-            response = await self._client.post(
-                OPENAI_API_URL, json=payload, headers=headers, timeout=30.0
-            )
+            response = await self._client.post(OPENAI_API_URL, json=payload, headers=headers)
         except httpx.TimeoutException as exc:
             raise ProviderTimeoutError("OpenAI request timed out") from exc
 

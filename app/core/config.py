@@ -60,6 +60,15 @@ class Settings(BaseSettings):
     idempotency_lock_ttl_seconds: int = 60
     idempotency_result_ttl_seconds: int = 86400
 
+    # Shared HTTP client tuning for outbound provider calls: connection pool
+    # limits and the default request timeout. Defaults match httpx's own
+    # built-in defaults, just made explicit and configurable instead of
+    # invisible library behavior.
+    http_max_connections: int = 100
+    http_max_keepalive_connections: int = 20
+    http_keepalive_expiry_seconds: float = 5.0
+    http_timeout_seconds: float = 30.0
+
 
 @lru_cache
 def get_settings() -> Settings:

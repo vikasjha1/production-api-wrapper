@@ -1,7 +1,6 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-import httpx
 from fastapi import FastAPI
 from redis.asyncio import Redis
 
@@ -10,12 +9,13 @@ from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging
 from app.middleware.request_logging import RequestLoggingMiddleware
+from app.services.http_client_factory import build_http_client
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     settings = get_settings()
-    app.state.http_client = httpx.AsyncClient()
+    app.state.http_client = build_http_client(settings)
     app.state.redis = Redis.from_url(settings.redis_url)
     app.state.circuit_breakers = {}
     yield

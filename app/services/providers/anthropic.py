@@ -40,9 +40,7 @@ class AnthropicProvider:
         }
 
         try:
-            response = await self._client.post(
-                ANTHROPIC_API_URL, json=payload, headers=headers, timeout=30.0
-            )
+            response = await self._client.post(ANTHROPIC_API_URL, json=payload, headers=headers)
         except httpx.TimeoutException as exc:
             raise ProviderTimeoutError("Anthropic request timed out") from exc
 
