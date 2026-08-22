@@ -8,6 +8,7 @@ from app.api.v1.router import api_router
 from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging
+from app.db.session import build_db_engine, build_session_factory
 from app.middleware.request_logging import RequestLoggingMiddleware
 from app.services.http_client_factory import build_http_client
 
@@ -18,9 +19,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     app.state.http_client = build_http_client(settings)
     app.state.redis = Redis.from_url(settings.redis_url)
     app.state.circuit_breakers = {}
+    app.state.db_engine = build_db_engine(settings)
+    app.state.db_session_factory = build_session_factory(app.state.db_engine)
     yield
     await app.state.http_client.aclose()
     await app.state.redis.aclose()
+    await app.state.db_engine.dispose()
 
 
 def create_app() -> FastAPI:

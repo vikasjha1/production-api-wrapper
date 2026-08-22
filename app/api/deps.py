@@ -1,7 +1,10 @@
+from collections.abc import AsyncGenerator
+
 import httpx
 from fastapi import Depends, Request, Security
 from fastapi.security import APIKeyHeader
 from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings, get_settings
 from app.core.exceptions import UnauthorizedError
@@ -21,6 +24,17 @@ def get_redis(request: Request) -> Redis:
 
 def get_circuit_breakers(request: Request) -> dict[str, CircuitBreaker]:
     return request.app.state.circuit_breakers  # type: ignore[no-any-return]
+
+
+def get_db_session_factory(request: Request) -> async_sessionmaker[AsyncSession]:
+    return request.app.state.db_session_factory  # type: ignore[no-any-return]
+
+
+async def get_db_session(
+    session_factory: async_sessionmaker[AsyncSession] = Depends(get_db_session_factory),
+) -> AsyncGenerator[AsyncSession]:
+    async with session_factory() as session:
+        yield session
 
 
 class AuthenticatedClient:

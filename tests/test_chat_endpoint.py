@@ -1,20 +1,26 @@
-from collections.abc import Generator
+import asyncio
+from collections.abc import AsyncGenerator, Generator
+from pathlib import Path
 
 import httpx
 import pytest
 import respx
 from fakeredis.aioredis import FakeRedis
 from fastapi.testclient import TestClient
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.api.deps import get_redis
+from app.api.deps import get_db_session, get_redis
 from app.core.config import Settings, get_settings
+from app.db.base import Base
+from app.db.models import RequestLog
 from app.main import app
 from app.services.providers.anthropic import ANTHROPIC_API_URL
 from app.services.providers.openai import OPENAI_API_URL
 
 
 @pytest.fixture
-def configured_client() -> Generator[TestClient, None, None]:
+def configured_client(tmp_path: Path) -> Generator[TestClient, None, None]:
     def override_settings() -> Settings:
         return Settings(
             api_keys={"test-key-abc": "test-client"},
@@ -36,12 +42,39 @@ def configured_client() -> Generator[TestClient, None, None]:
 
     fake_redis = FakeRedis()
 
+    # A real, file-based SQLite database, isolated per test. Schema is
+    # created on its own throwaway engine/event loop, then disposed, so
+    # runtime access (in TestClient's own event loop) never reuses a
+    # connection tied to a different loop.
+    db_path = tmp_path / "test.db"
+
+    async def _create_schema() -> None:
+        setup_engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+        async with setup_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        await setup_engine.dispose()
+
+    asyncio.run(_create_schema())
+
+    test_engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    test_session_factory = async_sessionmaker(test_engine, expire_on_commit=False)
+
+    async def override_get_db_session() -> AsyncGenerator[AsyncSession]:
+        async with test_session_factory() as session:
+            yield session
+
     app.dependency_overrides[get_settings] = override_settings
     app.dependency_overrides[get_redis] = lambda: fake_redis
+    app.dependency_overrides[get_db_session] = override_get_db_session
     with TestClient(app) as client:
+        # Exposed so tests that specifically verify audit log rows can read
+        # them back directly, without changing this fixture's return type
+        # for the many tests that don't care about the database at all.
+        client.db_session_factory = test_session_factory  # type: ignore[attr-defined]
         yield client
     app.dependency_overrides.pop(get_settings, None)
     app.dependency_overrides.pop(get_redis, None)
+    app.dependency_overrides.pop(get_db_session, None)
 
 
 @respx.mock
@@ -516,3 +549,80 @@ def test_chat_failed_attempt_releases_idempotency_key_for_retry(
     assert second.status_code == 200
     assert second.json()["content"] == "Recovered"
     assert route.call_count == 2
+
+
+def _fetch_audit_rows(client: TestClient) -> list[RequestLog]:
+    async def _fetch() -> list[RequestLog]:
+        session_factory = client.db_session_factory  # type: ignore[attr-defined]
+        async with session_factory() as session:
+            result = await session.execute(select(RequestLog))
+            return list(result.scalars().all())
+
+    return asyncio.run(_fetch())
+
+
+@respx.mock
+def test_chat_writes_audit_log_on_success(configured_client: TestClient) -> None:
+    respx.post(ANTHROPIC_API_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "content": [{"type": "text", "text": "Hello there"}],
+                "model": "claude-haiku-4-5-20251001",
+                "usage": {"input_tokens": 10, "output_tokens": 3},
+            },
+        )
+    )
+
+    response = configured_client.post(
+        "/v1/chat/anthropic",
+        headers={"X-API-Key": "test-key-abc"},
+        json={
+            "model": "claude-haiku-4-5-20251001",
+            "messages": [{"role": "user", "content": "audit check"}],
+        },
+    )
+
+    assert response.status_code == 200
+
+    rows = _fetch_audit_rows(configured_client)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.client_id == "test-client"
+    assert row.provider == "anthropic"
+    assert row.used_provider == "anthropic"
+    assert row.status == "success"
+    assert row.status_code == 200
+    assert row.cache_hit is False
+    assert row.fallback_used is False
+    assert row.input_tokens == 10
+    assert row.output_tokens == 3
+    assert row.cost_usd is not None
+    assert row.latency_ms > 0
+
+
+@respx.mock
+def test_chat_writes_audit_log_on_failure(configured_client: TestClient) -> None:
+    respx.post(ANTHROPIC_API_URL).mock(
+        return_value=httpx.Response(503, json={"error": "overloaded"})
+    )
+
+    response = configured_client.post(
+        "/v1/chat/anthropic",
+        headers={"X-API-Key": "test-key-abc"},
+        json={
+            "model": "claude-haiku-4-5-20251001",
+            "messages": [{"role": "user", "content": "audit failure check"}],
+        },
+    )
+
+    assert response.status_code == 502
+
+    rows = _fetch_audit_rows(configured_client)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.status == "error"
+    assert row.error_code == "provider_error"
+    assert row.status_code == 502
+    assert row.input_tokens is None
+    assert row.cost_usd is None

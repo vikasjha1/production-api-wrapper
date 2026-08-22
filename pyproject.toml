@@ -22,6 +22,7 @@ dev = [
     "pytest-asyncio>=0.24",
     "respx>=0.23.1",
     "fakeredis>=2.37.0",
+    "aiosqlite>=0.22.1",
 ]
 
 [build-system]
@@ -37,6 +38,7 @@ testpaths = ["tests"]
 [tool.ruff]
 target-version = "py312"
 line-length = 100
+extend-exclude = ["alembic/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
