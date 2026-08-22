@@ -28,7 +28,14 @@ def calculate_cost_usd(
 
     prices = provider_pricing.get(model)
     if prices is None:
-        return None
+        # Providers often respond with a more specific, dated model string
+        # than what was requested (e.g. "gpt-4o-mini-2024-07-18" for a
+        # request of "gpt-4o-mini"). Fall back to the longest known pricing
+        # key that the actual model name starts with.
+        matching_keys = [key for key in provider_pricing if model.startswith(key)]
+        if not matching_keys:
+            return None
+        prices = provider_pricing[max(matching_keys, key=len)]
 
     input_price_per_million, output_price_per_million = prices
     return (input_tokens / 1_000_000) * input_price_per_million + (

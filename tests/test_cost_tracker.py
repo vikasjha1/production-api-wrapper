@@ -25,6 +25,17 @@ def test_calculate_cost_returns_none_for_unknown_model() -> None:
     assert cost is None
 
 
+def test_calculate_cost_matches_a_dated_model_snapshot_by_prefix() -> None:
+    # OpenAI (and others) often respond with a more specific, dated model
+    # string than what was requested — e.g. "gpt-4o-mini-2024-07-18" for a
+    # request of "gpt-4o-mini". This reproduces exactly that real case.
+    cost = calculate_cost_usd(
+        "openai", "gpt-4o-mini-2024-07-18", input_tokens=1_000_000, output_tokens=1_000_000
+    )
+
+    assert cost == pytest.approx(0.15 + 0.60)
+
+
 @pytest.mark.asyncio
 async def test_record_usage_accumulates_cost_in_redis() -> None:
     redis = FakeRedis()
