@@ -69,6 +69,10 @@ class Settings(BaseSettings):
     http_keepalive_expiry_seconds: float = 5.0
     http_timeout_seconds: float = 30.0
 
+    # How long /v1/ready waits for each dependency check before treating
+    # it as unreachable, rather than hanging indefinitely.
+    readiness_check_timeout_seconds: float = 2.0
+
 
 @lru_cache
 def get_settings() -> Settings:
