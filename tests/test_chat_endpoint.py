@@ -626,3 +626,69 @@ def test_chat_writes_audit_log_on_failure(configured_client: TestClient) -> None
     assert row.status_code == 502
     assert row.input_tokens is None
     assert row.cost_usd is None
+
+
+@respx.mock
+def test_chat_allows_provider_within_allowed_scope(configured_client: TestClient) -> None:
+    def scoped_key_settings() -> Settings:
+        return Settings(
+            api_keys={"scoped-key": "scoped-client"},
+            api_key_allowed_providers={"scoped-key": ["anthropic"]},
+            anthropic_api_key="fake-anthropic-key",
+            openai_api_key=None,
+            rate_limit_requests=100,
+            rate_limit_window_seconds=60,
+            retry_max_attempts=3,
+            retry_base_delay_seconds=0.01,
+            circuit_breaker_failure_threshold=100,
+            circuit_breaker_recovery_timeout_seconds=30.0,
+            idempotency_lock_ttl_seconds=60,
+            idempotency_result_ttl_seconds=86400,
+        )
+
+    app.dependency_overrides[get_settings] = scoped_key_settings
+
+    respx.post(ANTHROPIC_API_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "content": [{"type": "text", "text": "allowed"}],
+                "model": "claude-haiku-4-5-20251001",
+                "usage": {"input_tokens": 5, "output_tokens": 2},
+            },
+        )
+    )
+
+    response = configured_client.post(
+        "/v1/chat/anthropic",
+        headers={"X-API-Key": "scoped-key"},
+        json={
+            "model": "claude-haiku-4-5-20251001",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+
+    assert response.status_code == 200
+
+
+def test_chat_rejects_provider_outside_allowed_scope(configured_client: TestClient) -> None:
+    def scoped_key_settings() -> Settings:
+        return Settings(
+            api_keys={"scoped-key": "scoped-client"},
+            api_key_allowed_providers={"scoped-key": ["anthropic"]},
+            anthropic_api_key="fake-anthropic-key",
+            openai_api_key="fake-openai-key",
+            rate_limit_requests=100,
+            rate_limit_window_seconds=60,
+        )
+
+    app.dependency_overrides[get_settings] = scoped_key_settings
+
+    response = configured_client.post(
+        "/v1/chat/openai",
+        headers={"X-API-Key": "scoped-key"},
+        json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}]},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "forbidden"

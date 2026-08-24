@@ -1,3 +1,4 @@
+from datetime import datetime
 from functools import lru_cache
 
 from pydantic import Field
@@ -26,6 +27,14 @@ class Settings(BaseSettings):
     # Temporary home until a real database exists (see api_keys usage
     # in app/api/deps.py). Set via API_KEYS as a JSON object in .env.
     api_keys: dict[str, str] = Field(default_factory=dict)
+
+    # Optional per-key restrictions, both additive to api_keys above so a
+    # key absent from either dict is simply unrestricted / never expires —
+    # existing keys and existing tests are unaffected unless explicitly
+    # opted in. raw key -> allowed provider names.
+    api_key_allowed_providers: dict[str, list[str]] = Field(default_factory=dict)
+    # raw key -> expiry timestamp (UTC). Keys not listed never expire.
+    api_key_expires_at: dict[str, datetime] = Field(default_factory=dict)
 
     # Provider credentials — left optional for now (Phase 1 doesn't call
     # any provider). We revisit this in Phase 2 and make them required,

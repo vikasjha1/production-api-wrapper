@@ -28,6 +28,11 @@ class UnauthorizedError(GatewayError):
     error_code = "unauthorized"
 
 
+class ForbiddenError(GatewayError):
+    status_code = 403
+    error_code = "forbidden"
+
+
 class ProviderError(GatewayError):
     status_code = 502
     error_code = "provider_error"

@@ -1,4 +1,5 @@
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
 
 import httpx
 from fastapi import Depends, Request, Security
@@ -7,7 +8,7 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings, get_settings
-from app.core.exceptions import UnauthorizedError
+from app.core.exceptions import ForbiddenError, UnauthorizedError
 from app.services.circuit_breaker import CircuitBreaker
 from app.services.rate_limiter import check_rate_limit
 
@@ -38,8 +39,9 @@ async def get_db_session(
 
 
 class AuthenticatedClient:
-    def __init__(self, client_id: str) -> None:
+    def __init__(self, client_id: str, allowed_providers: list[str] | None) -> None:
         self.client_id = client_id
+        self.allowed_providers = allowed_providers
 
 
 def get_current_client(
@@ -53,7 +55,12 @@ def get_current_client(
     if client_id is None:
         raise UnauthorizedError("Invalid API key")
 
-    return AuthenticatedClient(client_id=client_id)
+    expires_at = settings.api_key_expires_at.get(api_key)
+    if expires_at is not None and expires_at < datetime.now(UTC):
+        raise UnauthorizedError("API key has expired")
+
+    allowed_providers = settings.api_key_allowed_providers.get(api_key)
+    return AuthenticatedClient(client_id=client_id, allowed_providers=allowed_providers)
 
 
 async def get_rate_limited_client(
@@ -67,4 +74,13 @@ async def get_rate_limited_client(
         limit=settings.rate_limit_requests,
         window_seconds=settings.rate_limit_window_seconds,
     )
+    return client
+
+
+def get_authorized_client(
+    provider: str,
+    client: AuthenticatedClient = Depends(get_rate_limited_client),
+) -> AuthenticatedClient:
+    if client.allowed_providers is not None and provider not in client.allowed_providers:
+        raise ForbiddenError(f"This API key is not authorized to use provider '{provider}'")
     return client

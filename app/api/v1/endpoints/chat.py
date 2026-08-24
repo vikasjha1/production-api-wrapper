@@ -9,10 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import (
     AuthenticatedClient,
+    get_authorized_client,
     get_circuit_breakers,
     get_db_session,
     get_http_client,
-    get_rate_limited_client,
     get_redis,
 )
 from app.core.config import Settings, get_settings
@@ -137,7 +137,7 @@ async def chat(
     provider: str,
     request: ChatRequest,
     response: Response,
-    client: AuthenticatedClient = Depends(get_rate_limited_client),
+    client: AuthenticatedClient = Depends(get_authorized_client),
     settings: Settings = Depends(get_settings),
     http_client: httpx.AsyncClient = Depends(get_http_client),
     redis: Redis = Depends(get_redis),
