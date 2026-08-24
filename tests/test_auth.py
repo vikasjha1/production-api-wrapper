@@ -13,7 +13,8 @@ def client_with_test_key() -> Generator[TestClient, None, None]:
         return Settings(api_keys={"test-key-abc": "test-client"})
 
     app.dependency_overrides[get_settings] = override_settings
-    yield TestClient(app)
+    with TestClient(app) as client:
+        yield client
     app.dependency_overrides.pop(get_settings, None)
 
 
