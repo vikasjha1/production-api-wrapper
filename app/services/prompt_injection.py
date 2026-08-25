@@ -28,7 +28,5 @@ _SUSPICIOUS_PATTERNS = [
 
 def detect_prompt_injection_risk(messages: list[ChatMessage]) -> bool:
     return any(
-        pattern.search(message.content)
-        for message in messages
-        for pattern in _SUSPICIOUS_PATTERNS
+        pattern.search(message.content) for message in messages for pattern in _SUSPICIOUS_PATTERNS
     )
