@@ -82,6 +82,13 @@ class Settings(BaseSettings):
     # it as unreachable, rather than hanging indefinitely.
     readiness_check_timeout_seconds: float = 2.0
 
+    # Browser origins allowed to call this gateway cross-origin, e.g.
+    # ["https://dashboard.example.com"]. Empty by default: this API is
+    # authenticated with a raw header (X-API-Key), not cookies, so there's
+    # no same-site/CSRF concern — CORS only matters once a specific
+    # browser-based frontend needs to call it, so it stays opt-in.
+    cors_allowed_origins: list[str] = Field(default_factory=list)
+
 
 @lru_cache
 def get_settings() -> Settings:
