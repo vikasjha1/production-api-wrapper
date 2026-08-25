@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     # Redis / Postgres — stubbed now, wired up for real once those
     # phases start. Defaults point at local dev services.
     redis_url: str = "redis://localhost:6379/0"
-    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/gateway"
+    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5433/gateway"
 
     # Rate limiting: max requests per client within the rolling window.
     rate_limit_requests: int = 60
