@@ -20,6 +20,7 @@ async def write_audit_log(
     output_tokens: int | None,
     cost_usd: float | None,
     latency_ms: float,
+    prompt_injection_suspected: bool = False,
 ) -> None:
     entry = RequestLog(
         request_id=request_id,
@@ -36,6 +37,7 @@ async def write_audit_log(
         output_tokens=output_tokens,
         cost_usd=cost_usd,
         latency_ms=latency_ms,
+        prompt_injection_suspected=prompt_injection_suspected,
     )
     session.add(entry)
     await session.commit()

@@ -1,6 +1,6 @@
 import datetime
 
-from sqlalchemy import DateTime, func
+from sqlalchemy import DateTime, false, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -20,6 +20,7 @@ class RequestLog(Base):
     status_code: Mapped[int]
     cache_hit: Mapped[bool]
     fallback_used: Mapped[bool]
+    prompt_injection_suspected: Mapped[bool] = mapped_column(default=False, server_default=false())
     input_tokens: Mapped[int | None]
     output_tokens: Mapped[int | None]
     cost_usd: Mapped[float | None]

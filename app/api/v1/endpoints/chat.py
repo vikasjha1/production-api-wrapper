@@ -28,6 +28,7 @@ from app.services.idempotency import (
     release_idempotency_key,
     store_idempotent_response,
 )
+from app.services.prompt_injection import detect_prompt_injection_risk
 from app.services.resilient_call import call_provider_with_resilience
 
 router = APIRouter()
@@ -108,6 +109,7 @@ async def _safe_write_audit_log(
     input_tokens: int | None,
     output_tokens: int | None,
     cost_usd: float | None,
+    prompt_injection_suspected: bool,
 ) -> None:
     latency_ms = (time.perf_counter() - start_time) * 1000
     try:
@@ -127,6 +129,7 @@ async def _safe_write_audit_log(
             output_tokens=output_tokens,
             cost_usd=cost_usd,
             latency_ms=latency_ms,
+            prompt_injection_suspected=prompt_injection_suspected,
         )
     except Exception:
         logger.warning("Failed to write audit log entry", exc_info=True)
@@ -155,6 +158,7 @@ async def chat(
 
     start_time = time.perf_counter()
     request_id = request_id_ctx.get()
+    prompt_injection_suspected = detect_prompt_injection_risk(request.messages)
 
     try:
         outcome = await _generate_chat_response(
@@ -182,11 +186,14 @@ async def chat(
             input_tokens=None,
             output_tokens=None,
             cost_usd=None,
+            prompt_injection_suspected=prompt_injection_suspected,
         )
         raise
 
     response.headers["X-Cache"] = "HIT" if outcome.cache_hit else "MISS"
     response.headers["X-Fallback"] = "true" if outcome.fallback_used else "false"
+    if prompt_injection_suspected:
+        response.headers["X-Prompt-Injection-Suspected"] = "true"
 
     if idempotency_key is not None:
         await store_idempotent_response(
@@ -219,6 +226,7 @@ async def chat(
         input_tokens=outcome.response.usage.input_tokens,
         output_tokens=outcome.response.usage.output_tokens,
         cost_usd=cost_usd,
+        prompt_injection_suspected=prompt_injection_suspected,
     )
 
     return outcome.response
