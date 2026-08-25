@@ -137,6 +137,70 @@ def test_chat_rejects_unconfigured_provider(configured_client: TestClient) -> No
     assert response.status_code == 400
 
 
+def test_chat_rejects_empty_messages_list(configured_client: TestClient) -> None:
+    response = configured_client.post(
+        "/v1/chat/anthropic",
+        headers={"X-API-Key": "test-key-abc"},
+        json={"model": "claude-haiku-4-5-20251001", "messages": []},
+    )
+
+    assert response.status_code == 422
+
+
+def test_chat_rejects_invalid_message_role(configured_client: TestClient) -> None:
+    response = configured_client.post(
+        "/v1/chat/anthropic",
+        headers={"X-API-Key": "test-key-abc"},
+        json={
+            "model": "claude-haiku-4-5-20251001",
+            "messages": [{"role": "hacker", "content": "hi"}],
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_chat_rejects_oversized_message_content(configured_client: TestClient) -> None:
+    response = configured_client.post(
+        "/v1/chat/anthropic",
+        headers={"X-API-Key": "test-key-abc"},
+        json={
+            "model": "claude-haiku-4-5-20251001",
+            "messages": [{"role": "user", "content": "x" * 50_001}],
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_chat_rejects_max_tokens_out_of_range(configured_client: TestClient) -> None:
+    response = configured_client.post(
+        "/v1/chat/anthropic",
+        headers={"X-API-Key": "test-key-abc"},
+        json={
+            "model": "claude-haiku-4-5-20251001",
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 1_000_000,
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_chat_rejects_temperature_out_of_range(configured_client: TestClient) -> None:
+    response = configured_client.post(
+        "/v1/chat/anthropic",
+        headers={"X-API-Key": "test-key-abc"},
+        json={
+            "model": "claude-haiku-4-5-20251001",
+            "messages": [{"role": "user", "content": "hi"}],
+            "temperature": -1.0,
+        },
+    )
+
+    assert response.status_code == 422
+
+
 @respx.mock
 def test_chat_returns_429_after_rate_limit_exceeded(configured_client: TestClient) -> None:
     def restrictive_rate_limit_settings() -> Settings:

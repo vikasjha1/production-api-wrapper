@@ -1,21 +1,23 @@
-from pydantic import BaseModel
+from typing import Literal
+
+from pydantic import BaseModel, Field
 
 
 class ChatMessage(BaseModel):
-    role: str
-    content: str
+    role: Literal["system", "user", "assistant"]
+    content: str = Field(min_length=1, max_length=50_000)
 
 
 class ChatFallback(BaseModel):
     provider: str
-    model: str
+    model: str = Field(min_length=1, max_length=200)
 
 
 class ChatRequest(BaseModel):
-    model: str
-    messages: list[ChatMessage]
-    max_tokens: int = 1024
-    temperature: float = 1.0
+    model: str = Field(min_length=1, max_length=200)
+    messages: list[ChatMessage] = Field(min_length=1, max_length=100)
+    max_tokens: int = Field(default=1024, gt=0, le=8192)
+    temperature: float = Field(default=1.0, ge=0.0, le=2.0)
     fallback: ChatFallback | None = None
 
 
