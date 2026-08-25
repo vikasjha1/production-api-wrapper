@@ -32,3 +32,6 @@ jobs:
 
       - name: Run tests
         run: uv run pytest -v
+
+      - name: Build Docker image
+        run: docker build -t production-api-wrapper:ci .
